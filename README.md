@@ -1,128 +1,165 @@
 # wled-screen-streamer
 
-Snelle native Linux/X11 screen-to-WLED-streamer in C++20. Het programma
-captured steeds het nieuwste schermbeeld met X11 MIT-SHM, schaalt direct naar
-een kleine RGB-matrix en verstuurt het resultaat als correct gefragmenteerde
-WLED DDP-datagrammen via UDP.
+A low-latency native Linux streamer that captures an X11 desktop or decodes an
+RTSP network video source, scales it to a small RGB LED matrix, and sends it to
+WLED using correctly fragmented DDP/UDP frames.
 
-Als alternatief kan een RTSP-netwerkcamera native via FFmpeg/libavformat en
-libavcodec worden gedecodeerd. Er wordt geen `ffmpeg`-subprocess gestart.
+The screen path uses X11 MIT-SHM. The RTSP path uses FFmpeg libraries directly
+in-process (`libavformat`, `libavcodec`, and `libswscale`); it never launches an
+`ffmpeg` subprocess.
 
-De defaults zijn afgestemd op deze installatie:
+Default configuration:
 
-- host `wled-matrix2.local`, UDP-poort 4048;
-- matrix 64×64, RGB24 (12.288 bytes per frame);
-- 60 fps, monitor 0, volledige capture;
-- nearest-neighbour resize, supersample-AA factor 2;
-- saturation 1,15, contrast 1,10, brightness 1,00 en gamma 1,00.
+- source: X11 screen;
+- WLED host: `wled-matrix2.local`;
+- protocol: DDP over UDP port 4048;
+- output: 64×64 RGB24, 12,288 data bytes per frame;
+- target rate: 60 fps;
+- capture: monitor 0, full monitor;
+- resize filter: nearest-neighbor;
+- anti-aliasing: 2× supersampling;
+- saturation 1.15, contrast 1.10, brightness 1.00, gamma 1.00.
 
-## Kenmerken
+## Features
 
-- MIT-SHM-capture; geen screenshots, Python of ffmpeg in het datapad.
-- Native RTSP-decode met TCP/UDP-keuze, low-latencyopties en reconnect.
-- Vooraf toegewezen capture-, RGB-, header- en socketbuffers.
-- Eén Linux `sendmmsg()`-aanroep voor negen DDP-pakketten per frame.
-- Nearest en bilinear resize.
-- Box/area supersampling en separabele Gaussian anti-aliasing.
-- Full, center-square, center-native en expliciete crop.
-- Automatische crop-herberekening na XRandR-wijzigingen.
-- Geen framewachtrij: achterstallige deadlines worden overgeslagen.
-- Testpatronen, DDP-headerdump, benchmarks en nette signaalafhandeling.
+- Native X11 capture through MIT-SHM.
+- Native RTSP decode with selectable TCP or UDP transport.
+- Automatic RTSP reconnect and interruptible network timeouts.
+- Single latest-frame RTSP slot: no application-level video queue.
+- Preallocated capture, RGB, AA, header, and socket buffers.
+- One Linux `sendmmsg()` call for all DDP fragments in a frame.
+- Full, centered-square, centered-native, and explicit crops.
+- Automatic crop recalculation after XRandR resolution changes.
+- Nearest-neighbor and bilinear resize filters.
+- Box/area supersampling and separable Gaussian anti-aliasing.
+- Fixed-point color correction with startup-generated LUTs.
+- No output frame queue: missed deadlines are skipped.
+- Exact test patterns and one-frame DDP header diagnostics.
+- Capture, resize, color, send, FPS, skip, and CPU measurements.
+- Clean shutdown through Ctrl+C, SIGINT, or SIGTERM.
 
-## Vereisten en bouwen
+## Requirements
 
-Vereist Linux/X11 met MIT-SHM en XRandR, een C++20-compiler, CMake 3.20+,
-Ninja, Xlib/Xext/Xrandr-developmentheaders en FFmpeg-developmentlibraries
-(`libavformat`, `libavcodec`, `libavutil`, `libswscale`). Op CachyOS/Arch Linux:
+- Linux with an X11 session for screen capture
+- X11 MIT-SHM and XRandR extensions
+- A C++20 compiler
+- CMake 3.20 or newer
+- Ninja (recommended)
+- Xlib, Xext, and Xrandr development files
+- FFmpeg development libraries: libavformat, libavcodec, libavutil, libswscale
+- Network access to WLED UDP port 4048
+- Working mDNS when using a `.local` hostname
 
-```sh
+On CachyOS or Arch Linux:
+
+```bash
 sudo pacman -S --needed base-devel cmake ninja libx11 libxext libxrandr ffmpeg
+```
+
+## Build
+
+From the repository root:
+
+```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-De releasebinary staat in `build/wled-screen-streamer`. De build gebruikt
-`-O3 -march=native -mtune=native -flto` en is dus voor de lokale CPU
-geoptimaliseerd. Optioneel installeren:
+The executable is written to:
 
-```sh
+```text
+build/wled-screen-streamer
+```
+
+Release builds use `-O3`, `-march=native`, `-mtune=native`, and link-time
+optimization (`-flto`). The resulting executable is optimized for the local CPU
+and may not be ideal for older machines.
+
+Optional local installation:
+
+```bash
 cmake --install build --prefix ~/.local
 ```
 
-## Snel starten
+## Quick start
 
-```sh
-# defaults: 64x64, 60 fps, full, nearest, supersample 2
+```bash
+# Defaults: X11, 64x64, 60 fps, full monitor, nearest, 2x supersampling
 ./build/wled-screen-streamer
 
-# vierkante crop zonder stretching of zwarte balken
+# Square crop without stretching or black bars
 ./build/wled-screen-streamer --crop-mode center-square
 
-# gecentreerde 128x128 broncrop, echte 2x2 area-downsample
+# Centered 128x128 source crop and true 2x2 area downsample
 ./build/wled-screen-streamer --crop-mode center-native
 
-# 120 fps met statistieken
+# 120 fps with timing output
 ./build/wled-screen-streamer --crop-mode center-square --fps 120 --benchmark
 
-# zonder FPS-limiet
+# Uncapped sender benchmark
 ./build/wled-screen-streamer --fps 0 --benchmark
 
-# native RTSP-camera via TCP
+# Native RTSP camera over TCP
 ./build/wled-screen-streamer \
-  --source rtsp --url rtsp://HOST:8554/reolink \
-  --crop-mode center-square --fps 20
+  --source rtsp \
+  --url rtsp://HOST:8554/reolink \
+  --crop-mode center-square \
+  --fps 20
 ```
 
-Ctrl+C sluit netjes af.
+Press Ctrl+C to stop.
 
-## Alle CLI-opties
+## Command-line options
 
-| Optie | Betekenis | Default |
+| Option | Meaning | Default |
 |---|---|---|
-| `--host HOST` | WLED-hostnaam of IP-adres | `wled-matrix2.local` |
-| `--source SOURCE` | `screen` of `rtsp` | `screen` |
-| `--url URL` | Netwerkvideo-URL, verplicht voor RTSP | niet ingesteld |
-| `--rtsp-transport MODE` | RTSP over `tcp` of `udp` | `tcp` |
-| `--width N` | Outputbreedte | `64` |
-| `--height N` | Outputhoogte | `64` |
-| `--fps N` | Doel-FPS; `0` is uncapped | `60` |
-| `--monitor N` | Actieve XRandR-monitorindex | `0` |
-| `--crop X,Y,W,H` | Expliciete absolute schermcrop | niet ingesteld |
-| `--crop-mode MODE` | `full`, `center-square` of `center-native` | `full` |
-| `--crop-x N` | Horizontale center-square-offset in de monitor | automatisch |
-| `--crop-y N` | Verticale center-square-offset in de monitor | automatisch |
-| `--crop-size N` | Zijde van de vierkante crop | automatisch |
-| `--filter FILTER` | `nearest` of `bilinear` | `nearest` |
-| `--aa MODE` | `off`, `gaussian` of `supersample` | `supersample` |
-| `--aa-strength FLOAT` | Gaussian sigma tussen 0,5 en 2,0 | `1.0` |
-| `--supersample N` | Supersamplefactor tussen 1 en 8 | `2` |
-| `--saturation FLOAT` | Kleurverzadigingsfactor, 0–4 | `1.15` |
-| `--contrast FLOAT` | Contrastfactor rond 127,5, 0–4 | `1.10` |
-| `--brightness FLOAT` | Helderheidsfactor, 0–4 | `1.00` |
-| `--gamma FLOAT` | Streamergamma, 0,1–5 | `1.00` |
-| `--no-color-correction` | Schakel de volledige kleurfase uit | uit |
-| `--test-pattern PATTERN` | Pixelgenerator zonder screen capture | uit |
-| `--ddp-debug` | Dump headers van alleen het eerste frame | uit |
-| `--benchmark` | Periodieke datapadtimings | uit |
-| `--help` | Ingebouwde hulp | — |
+| `--host HOST` | WLED hostname or IP address | `wled-matrix2.local` |
+| `--source SOURCE` | `screen` or `rtsp` | `screen` |
+| `--url URL` | Network video URL; required for RTSP | unset |
+| `--rtsp-transport MODE` | RTSP over `tcp` or `udp` | `tcp` |
+| `--width N` | Output width | `64` |
+| `--height N` | Output height | `64` |
+| `--fps N` | Maximum output FPS; `0` is uncapped | `60` |
+| `--monitor N` | Active XRandR monitor index | `0` |
+| `--crop X,Y,W,H` | Explicit crop in absolute source coordinates | unset |
+| `--crop-mode MODE` | `full`, `center-square`, or `center-native` | `full` |
+| `--crop-x N` | Horizontal center-square offset within the source | automatic |
+| `--crop-y N` | Vertical center-square offset within the source | automatic |
+| `--crop-size N` | Side length of the center-square crop | automatic |
+| `--filter FILTER` | `nearest` or `bilinear` | `nearest` |
+| `--aa MODE` | `off`, `gaussian`, or `supersample` | `supersample` |
+| `--aa-strength FLOAT` | Gaussian sigma from 0.5 to 2.0 | `1.0` |
+| `--supersample N` | Supersampling factor from 1 to 8 | `2` |
+| `--saturation FLOAT` | Saturation factor from 0 to 4 | `1.15` |
+| `--contrast FLOAT` | Contrast around 127.5, from 0 to 4 | `1.10` |
+| `--brightness FLOAT` | Brightness factor from 0 to 4 | `1.00` |
+| `--gamma FLOAT` | Streamer gamma from 0.1 to 5 | `1.00` |
+| `--no-color-correction` | Disable the entire color stage | disabled |
+| `--test-pattern PATTERN` | Generate pixels without screen or RTSP capture | unset |
+| `--ddp-debug` | Dump DDP headers for the first frame only | disabled |
+| `--benchmark` | Print periodic pipeline timing | disabled |
+| `--help` | Print built-in help | — |
 
-`--crop-x/y/size` vereisen `--crop-mode center-square`. Waarde `-1` betekent
-automatisch; kleinere negatieve waarden zijn ongeldig.
+`--crop-x`, `--crop-y`, and `--crop-size` require
+`--crop-mode center-square`. A value of `-1` means automatic; smaller negative
+values are invalid.
 
-## Videobronnen
+There is intentionally no `--source test`. Use `--test-pattern` instead.
 
-### X11-scherm
+## Video sources
 
-```sh
+### X11 screen
+
+```bash
 ./build/wled-screen-streamer --source screen
 ```
 
-`screen` is de default en gebruikt de bestaande X11 MIT-SHM-backend. Alle
-monitor-, XRandR- en cropfunctionaliteit blijft beschikbaar.
+`screen` is the default. Capture uses X11 MIT-SHM directly and retains all
+monitor, XRandR, and crop behavior.
 
-### RTSP-netwerkcamera
+### RTSP network camera
 
-```sh
+```bash
 ./build/wled-screen-streamer \
   --source rtsp \
   --url rtsp://HOST:8554/reolink \
@@ -131,30 +168,35 @@ monitor-, XRandR- en cropfunctionaliteit blijft beschikbaar.
   --fps 20
 ```
 
-RTSP wordt in-process geopend met libavformat, gedecodeerd met libavcodec en
-naar RGB24 geconverteerd met libswscale. Er wordt nooit een externe
-`ffmpeg`-binary gestart. TCP is robuuster bij pakketverlies; UDP kan op een
-betrouwbaar lokaal netwerk een lagere latency bieden:
+RTSP is opened with libavformat, decoded with libavcodec, and converted to RGB24
+with libswscale. No external executable is started.
 
-```sh
-./build/wled-screen-streamer --source rtsp --url rtsp://CAMERA/stream --rtsp-transport udp
+TCP is more resilient to packet loss. UDP can reduce latency on a reliable
+local network:
+
+```bash
+./build/wled-screen-streamer \
+  --source rtsp \
+  --url rtsp://CAMERA/stream \
+  --rtsp-transport udp
 ```
 
-De decoder draait in één achtergrondthread. Deze publiceert één gedeelde
-`latest frame`-buffer; een nieuw frame vervangt het vorige direct. Er bestaat
-geen framequeue in de streamer. De DDP-thread verwerkt uitsluitend een nieuwe
-sequence en stuurt hetzelfde cameraframe nooit opnieuw. Daardoor interpoleert
-`--fps 60` een camera van 20 fps niet kunstmatig naar 60 fps. `--fps` is voor
-RTSP een maximale verzendfrequentie.
+The decoder runs in one background thread and publishes a single shared latest
+frame. A new decoded frame immediately replaces the previous one. The streamer
+does not build a camera frame queue.
 
-Voor minimale latency gebruikt RTSP `nobuffer`, low-delay, nul extra max-delay,
-een decoderthread en afbreekbare I/O-timeouts. Als openen, lezen of decoderen
-mislukt wordt de sessie gesloten en na één seconde opnieuw opgebouwd. Ctrl+C
-onderbreekt ook een vastgelopen netwerk-read.
+The DDP thread only processes a new decoder sequence. It never sends the same
+camera frame repeatedly, so a 20 fps camera is not artificially interpolated to
+60 fps. For RTSP, `--fps` is a maximum transmission rate.
 
-Crop, resize, AA, kleurcorrectie en DDP zijn na decode dezelfde pipeline als
-voor screen capture. Bij een cameraresolutiewijziging wordt de effectieve crop
-opnieuw berekend en gemeld. Voorbeeld:
+Low-latency RTSP settings include `nobuffer`, low-delay mode, zero additional
+maximum delay, one decoder thread, and interruptible I/O. When opening, reading,
+or decoding fails, the current session is closed and rebuilt after one second.
+Ctrl+C can interrupt a blocked network read.
+
+After decode, RTSP uses the same crop, resize, AA, color correction, and DDP
+pipeline as screen capture. A camera resolution change recalculates and prints
+the effective crop:
 
 ```text
 Capture: 1920x1080 (RTSP)
@@ -162,25 +204,26 @@ Crop: center-square 1080x1080+420+0
 Output: 64x64
 ```
 
-`--source test` bestaat bewust niet. Gebruik de bestaande `--test-pattern`-
-optie; een testpatroon omzeilt zowel screen- als RTSP-capture.
+Test patterns override either live source and do not require an RTSP URL.
 
-## Capture en crops
+## Capture and crop modes
 
 ### Full
 
-`--crop-mode full` gebruikt de hele geselecteerde monitor. Wanneer bron en
-output een andere beeldverhouding hebben, wordt het beeld uitgerekt.
+`--crop-mode full` captures the complete selected monitor or camera frame. If
+the source and output aspect ratios differ, the result is stretched.
 
-```sh
+```bash
 ./build/wled-screen-streamer --monitor 0 --crop-mode full
 ```
 
 ### Center-square
 
-`--crop-mode center-square` neemt vóór de resize het grootste gecentreerde
-vierkant. Zo wordt een vierkante matrix zonder stretching en zwarte balken
-gevuld. Voor 1920×1080:
+`--crop-mode center-square` selects the largest square centered within the
+source before resize. It fills a square matrix without stretching or black
+bars.
+
+For a 1920×1080 source:
 
 ```text
 size = min(1920, 1080) = 1080
@@ -189,7 +232,7 @@ y    = (1080 - 1080) / 2 = 0
 crop = 1080x1080+420+0
 ```
 
-Startup toont de effectieve geometrie:
+Startup output:
 
 ```text
 Capture: 1920x1080
@@ -197,20 +240,23 @@ Crop: center-square 1080x1080+420+0
 Output: 64x64
 ```
 
-Handmatige overrides zijn relatief aan de geselecteerde monitor. Weggelaten
-coördinaten worden met de gekozen grootte automatisch gecentreerd:
+Manual overrides are relative to the selected monitor or decoded frame.
+Omitted coordinates remain automatically centered:
 
-```sh
+```bash
 ./build/wled-screen-streamer \
   --crop-mode center-square \
-  --crop-x 400 --crop-y 0 --crop-size 1080
+  --crop-x 400 \
+  --crop-y 0 \
+  --crop-size 1080
 ```
 
 ### Center-native
 
-`--crop-mode center-native` neemt uit het midden van de geselecteerde monitor
-een gebied op outputresolutie, vermenigvuldigd met de supersamplefactor wanneer
-supersample-AA actief is. Met de defaults (64×64, factor 2) resulteert dit in:
+`--crop-mode center-native` selects a centered source area matching the output
+dimensions multiplied by the active supersampling factor.
+
+With the defaults—64×64 output and 2× supersampling—on a 1920×1080 source:
 
 ```text
 Capture: 1920x1080
@@ -219,108 +265,109 @@ Output: 64x64
 AA: supersample factor=2
 ```
 
-De 128×128-crop wordt met een echte 2×2 box average naar 64×64 teruggebracht.
-Met `--supersample 3` wordt de crop 192×192 op `+864+444` en gebruikt iedere
-outputpixel het gemiddelde van zijn corresponderende 3×3 brongebied.
+The 128×128 crop is reduced using a true 2×2 box average. With
+`--supersample 3`, the crop is 192×192 at `+864+444`, and each output pixel is
+the average of its corresponding 3×3 source region.
 
-```sh
+```bash
 ./build/wled-screen-streamer --crop-mode center-native
 ```
 
-Met `--aa off` of `--aa gaussian` is de center-native crop exact 64×64 en is er
-geen geometrische schaalstap. Bij afwijkende `--width` en `--height` wordt de
-native crop overeenkomstig groot. De effectieve crop inclusief supersampling
-moet binnen de geselecteerde monitor passen.
-`--crop-x`, `--crop-y` en `--crop-size` horen uitsluitend bij center-square.
+With `--aa off` or `--aa gaussian`, center-native captures exactly the output
+dimensions. The effective crop, including supersampling, must fit inside the
+source. `--crop-x`, `--crop-y`, and `--crop-size` only apply to center-square.
 
-### Expliciete crop
+### Explicit crop
 
-`--crop X,Y,W,H` gebruikt absolute X11-schermcoördinaten en heeft voorrang op
-monitor- en crop-modeberekeningen:
+`--crop X,Y,W,H` uses absolute source coordinates and takes precedence over
+monitor and crop-mode calculations:
 
-```sh
+```bash
 ./build/wled-screen-streamer --crop 100,50,800,800
 ```
 
-Iedere crop moet volledig binnen het X11-scherm vallen.
+The crop must fit completely within the source.
 
-### Wijzigende monitor of resolutie
+### Resolution and monitor changes
 
-De streamer luistert naar XRandR screen-, CRTC- en outputevents. Daarna worden
-monitor en crop opnieuw berekend. Alleen als de geometrie verandert wordt de
-XShm-buffer herbouwd; er wordt niet ieder frame gepolld.
+The X11 backend listens for XRandR screen, CRTC, and output events. It queries
+the selected monitor again and recalculates the crop. The XShm buffer is only
+rebuilt when geometry actually changes; the monitor is not polled every frame.
 
-## Resizefilters
+The RTSP backend similarly recalculates crop geometry when decoded dimensions
+change.
 
-- `nearest` is de snelste optie en behoudt harde pixels en lage latency.
-- `bilinear` mengt vier bronpixels per outputpixel voor een zachter beeld en
-  kost meer rekentijd.
+## Resize filters
 
-```sh
+- `nearest` is fastest and preserves hard pixel edges.
+- `bilinear` mixes four source pixels for a softer image at higher CPU cost.
+
+```bash
 ./build/wled-screen-streamer --filter nearest
 ./build/wled-screen-streamer --filter bilinear
 ```
 
-## Anti-aliasing en moiréreductie
+## Anti-aliasing and moiré reduction
 
-AA wordt alleen op live screen capture toegepast. Testpatronen blijven bewust
-exact, zodat kleuren en DDP-payloads byte voor byte controleerbaar zijn.
+AA only applies to live screen or RTSP capture. Test patterns intentionally
+bypass it so their RGB payload remains byte-exact.
 
 ### Off
 
-```sh
+```bash
 ./build/wled-screen-streamer --aa off
 ```
 
-De capture wordt direct met het gekozen resizefilter naar de output gebracht.
-Dit is het goedkoopst, maar fijne patronen kunnen op een 64×64-matrix aliasing
-of moiré veroorzaken.
+The source is resized directly to the output. This is the cheapest mode, but
+fine patterns may produce aliasing or moiré on a 64×64 matrix.
 
 ### Supersample
 
-```sh
+```bash
 ./build/wled-screen-streamer --aa supersample --supersample 2
 ```
 
-Dit is de default. Eerst wordt in een vooraf toegewezen werkbuffer met `N` keer
-de outputbreedte en -hoogte gerenderd. Daarna wordt iedere outputpixel berekend
-als het afgeronde gemiddelde van exact zijn `N×N` RGB-bronpixels. Dit is een
-echte area/box-downsample; er worden geen pixels overgeslagen en er zijn geen
-allocaties per frame.
+This is the default. The source is first rendered into a preallocated buffer
+whose width and height are both `N` times the output. Every output pixel is then
+the rounded average of exactly its corresponding `N×N` RGB pixels. This is a
+real area/box downsample: no samples are skipped and no per-frame allocation is
+performed.
 
-Bij center-native bepaalt de factor ook de capturecrop:
+For a 64×64 center-native source:
 
-| Factor | Capturecrop | Box per outputpixel |
+| Factor | Capture crop | Samples per output pixel |
 |---:|---:|---:|
 | 1 | 64×64 | 1×1 |
 | 2 | 128×128 | 2×2 |
 | 3 | 192×192 | 3×3 |
 
-Factoren 1 tot en met 8 zijn toegestaan. De interne werkafmetingen mogen niet
-groter worden dan 4096×4096.
+Factors from 1 through 8 are accepted. Internal working dimensions may not
+exceed 4096×4096.
 
 ### Gaussian
 
-```sh
+```bash
 ./build/wled-screen-streamer --aa gaussian --aa-strength 1.0
 ```
 
-Gaussian gebruikt een lichte separabele low-pass op de 64×64 RGB-output. De
-sterkte is sigma en ligt tussen 0,5 en 2,0. De kernel wordt bij startup tot
-drie sigma opgebouwd en genormaliseerd. Horizontale tussenresultaten gebruiken
-een vooraf toegewezen floatbuffer; randen worden geklemd. Richtlijnen:
+Gaussian applies a light separable low-pass filter to the 64×64 RGB output.
+Strength is sigma and ranges from 0.5 to 2.0. The normalized kernel is generated
+once at startup out to three sigma. Horizontal results use a preallocated float
+buffer, and image edges are clamped.
 
-- `0.5`: zeer licht, behoudt veel detail;
-- `1.0`: gebalanceerde defaultsterkte;
-- `2.0`: duidelijk zachter, sterkere moiréreductie.
+- `0.5`: very light filtering, retains most detail;
+- `1.0`: balanced;
+- `2.0`: visibly softer, stronger moiré reduction.
 
-`--aa-strength` wordt alleen door Gaussian gebruikt. `--supersample` wordt alleen
-door supersample-AA gebruikt.
+`--aa-strength` is only used by Gaussian mode. `--supersample` is only used by
+supersample mode.
 
-## Kleurcorrectie
+## Color correction
 
-Kleurcorrectie draait uitsluitend op live screen capture, na resize en AA en
-direct vóór DDP-packetizing. De standaardinstellingen zijn:
+Color correction only applies to live capture. It runs after resize and AA and
+immediately before DDP packetization.
+
+Defaults:
 
 ```text
 saturation = 1.15
@@ -329,43 +376,43 @@ brightness = 1.00
 gamma      = 1.00
 ```
 
-De bewerkingsvolgorde is vast:
+Processing order:
 
-1. contrast rond middenniveau 127,5;
-2. saturation ten opzichte van Rec.709-luminantie;
+1. contrast around midpoint 127.5;
+2. saturation relative to Rec.709 luminance;
 3. brightness;
-4. optionele gamma (`pow(channel, 1/gamma)`);
-5. clamp naar 0–255.
+4. optional gamma using `pow(channel, 1/gamma)`;
+5. clamp to 0–255.
 
-Contrast wordt bij startup als een 256-entry Q12-tabel berekend. Saturation en
-brightness gebruiken vaste-punt-integerberekeningen. Ook de gamma-LUT heeft 256
-entries en wordt slechts één keer opgebouwd. Er zijn geen frame-allocaties.
+Contrast is prepared as a 256-entry Q12 table. Saturation and brightness use
+fixed-point integer math. Gamma uses a 256-entry LUT generated once at startup.
+The color stage performs no per-frame allocation.
 
-Gamma staat bewust standaard op `1.00`: dat is een exacte identity en voorkomt
-dat gamma zowel in de streamer als door WLEDs realtime-gammaverwerking wordt
-toegepast. Kies alleen een andere waarde wanneer WLED niet al gamma toepast.
+Gamma deliberately defaults to `1.00`, which is an exact identity. This avoids
+applying gamma once in the streamer and again through WLED real-time gamma.
+Only choose another value when WLED is not already applying gamma.
 
-Alle correctie uitschakelen:
+Disable every color adjustment:
 
-```sh
+```bash
 ./build/wled-screen-streamer --no-color-correction
 ```
 
-Startup toont de effectieve toestand:
+Startup reports either:
 
 ```text
 Color correction: saturation=1.15 contrast=1.10 brightness=1.00 gamma=1.00
 ```
 
-of:
+or:
 
 ```text
 Color correction: disabled
 ```
 
-Aanbevolen TV-modus:
+Recommended TV-style mode:
 
-```sh
+```bash
 ./build/wled-screen-streamer \
   --crop-mode center-square \
   --aa supersample \
@@ -375,14 +422,19 @@ Aanbevolen TV-modus:
   --contrast 1.10
 ```
 
-## DDP-wireformat
+## DDP wire format
 
-64×64 RGB24 is exact `64 × 64 × 3 = 12.288` databytes. De packetizer gebruikt
-WLEDs fragmentgrootte van 1440 databytes. Elke UDP-datagram bevat een header van
-10 bytes, direct gevolgd door uitsluitend de juiste RGB-byte-range. Offset en
-length zijn big-endian byteaantallen, geen pixelaantallen.
+A 64×64 RGB24 frame contains exactly:
 
-| Pakket | Flags | Offset | Data | Datagram |
+```text
+64 × 64 × 3 = 12,288 data bytes
+```
+
+The packetizer follows WLED's 1,440-byte data fragment size. Each UDP datagram
+contains a 10-byte DDP header followed immediately by only the corresponding
+RGB byte range. Offset and length are big-endian byte counts, not pixel counts.
+
+| Packet | Flags | Byte offset | Data length | Datagram length |
 |---:|---:|---:|---:|---:|
 | 0 | `0x40` | 0 | 1440 | 1450 |
 | 1 | `0x40` | 1440 | 1440 | 1450 |
@@ -394,227 +446,271 @@ length zijn big-endian byteaantallen, geen pixelaantallen.
 | 7 | `0x40` | 10080 | 1440 | 1450 |
 | 8 | `0x41` | 11520 | 768 | 778 |
 
-Headerindeling:
+Header layout:
 
-| Bytes | Inhoud |
+| Bytes | Contents |
 |---|---|
-| 0 | DDP versie 1 (`0x40`), plus PUSH op alleen pakket 8 (`0x41`) |
-| 1 | Sequence in de lage nibble, 1–15 met wraparound |
-| 2 | Datatype `1`: RGB24 |
+| 0 | DDP version 1 (`0x40`), with PUSH only on packet 8 (`0x41`) |
+| 1 | Packet sequence in the low nibble, 1–15 with wraparound |
+| 2 | Data type `1`: RGB24 |
 | 3 | Destination `1`: display |
-| 4–7 | 32-bit offset, big-endian |
-| 8–9 | 16-bit payloadlengte, big-endian |
+| 4–7 | 32-bit byte offset, big-endian |
+| 8–9 | 16-bit payload length, big-endian |
 
-Het laatste pakket bevat exact 768 payloadbytes, zonder padding of headerbytes
-in de RGB-payload. Alle pakketten gaan via één `sendmmsg()` naar de kernel.
+The final packet contains exactly 768 payload bytes: no padding and no header
+bytes in the RGB payload. All fragments are submitted to the kernel using one
+`sendmmsg()` call per frame.
 
-### DDP-headerdump
+### DDP header diagnostics
 
-```sh
-./build/wled-screen-streamer --test-pattern solid-blue --ddp-debug
+```bash
+./build/wled-screen-streamer \
+  --test-pattern solid-blue \
+  --ddp-debug
 ```
 
-Dit print bij het eerste frame pakketnummer, flags, sequence, datatype,
-destination, offset en length. De stream loopt daarna normaal door.
+For the first frame, `--ddp-debug` prints packet number, flags, sequence, data
+type, destination, offset, and length. Streaming then continues normally.
 
-## Testpatronen
+## Test patterns
 
-Testpatronen omzeilen capture, resize, AA en kleurcorrectie, zodat DDP,
-kleurvolgorde en fysieke pixelmapping onafhankelijk getest kunnen worden. Zelfs
-expliciete extreme kleurparameters veranderen een testpatroon niet.
+Test patterns bypass capture, resize, AA, and color correction. They independently
+verify DDP, channel order, and physical pixel mapping. Even explicitly extreme
+color settings cannot modify a test pattern.
 
-| Naam | Inhoud |
+| Name | Contents |
 |---|---|
-| `rood` / `red` | Alle pixels RGB(255,0,0) |
-| `groen` / `green` | Alle pixels RGB(0,255,0) |
-| `blauw` / `blue` | Alle pixels RGB(0,0,255) |
-| `solid-blue` | Expliciete regressietest: 4096× RGB(0,0,255) |
-| `checkerboard` | Zwart-witte blokken van 8×8 pixels |
-| `lijn` / `line` | Bewegende witte verticale lijn |
+| `rood` or `red` | Every pixel is RGB(255,0,0) |
+| `groen` or `green` | Every pixel is RGB(0,255,0) |
+| `blauw` or `blue` | Every pixel is RGB(0,0,255) |
+| `solid-blue` | Explicit regression pattern: 4096× RGB(0,0,255) |
+| `checkerboard` | Black and white 8×8 blocks |
+| `lijn` or `line` | Moving white vertical line |
 
-```sh
-./build/wled-screen-streamer --test-pattern rood --fps 30
+```bash
+./build/wled-screen-streamer --test-pattern red --fps 30
 ./build/wled-screen-streamer --test-pattern checkerboard
-./build/wled-screen-streamer --test-pattern lijn --fps 60
+./build/wled-screen-streamer --test-pattern line --fps 60
 ./build/wled-screen-streamer --test-pattern solid-blue --ddp-debug
 ```
 
-De solid-blue-wiretest is lokaal byte voor byte gereconstrueerd: alle 12.288
-bytes waren aanwezig en vormden exact 4096 triplets `(0,0,255)`. De echte matrix
-gaf het resultaat egaal blauw weer.
+The solid-blue wire test has been reconstructed byte-for-byte locally. All
+12,288 bytes were present and formed exactly 4,096 `(0,0,255)` triplets. The
+physical matrix displayed a uniform blue image.
 
-## FPS, latency en benchmark
+## FPS, latency, and benchmarking
 
-Bij een positieve `--fps` gebruikt de streamer monotone deadlines. Wanneer de
-verwerking achterloopt worden verlopen perioden als `skipped` geteld; oude
-beelden worden nooit in een wachtrij gezet. De volgende iteratie captured het
-nieuwste beeld. `--fps 0` schakelt pacing uit.
+For positive `--fps`, the streamer uses monotonic deadlines. If processing
+falls behind, expired periods increment `skipped`; old images are never queued.
+The next iteration captures the newest available image. `--fps 0` disables
+pacing.
 
-`--benchmark` rapporteert per seconde en bij afsluiten:
+For RTSP, a frame is only sent when the decoder publishes a new sequence.
+Camera frames are never repeated to reach the requested output rate.
 
-- werkelijke FPS en frames;
-- overgeslagen deadlines;
-- gemiddelde capture-, resize/AA-, kleurcorrectie-, send- en totale frametijd;
-- proces-CPU als percentage van één core.
+`--benchmark` reports every second and at shutdown:
 
-CPU-werk van de afzonderlijke Xorg-server valt buiten de proces-CPU-meting. UDP
-bevestigt niet dat WLED ieder uncapped frame werkelijk weergeeft.
+- actual FPS and frame count;
+- missed deadlines;
+- average capture time;
+- average resize and AA time;
+- average color-correction time;
+- average DDP send time;
+- average total pipeline time;
+- process CPU as a percentage of one CPU core.
 
-### Gemeten resultaten
+Xorg runs in a separate process, so Xorg CPU time is not included. UDP also
+cannot confirm that WLED physically displays every uncapped frame.
 
-Intel N100, 1920×1080 X11-bron, 64×64 RGB24, nearest, AA off en lokale WLED
-(de oorspronkelijke baseline vóór AA):
+### Measured screen performance
 
-| Doel | Werkelijk | Capture | Resize | Send | Totaal | Skipped | CPU |
+Test machine: Intel N100, 1920×1080 X11 source, 64×64 RGB24, nearest-neighbor,
+local-network WLED. This baseline predates AA and uses AA off:
+
+| Target | Actual | Capture | Resize | Send | Total | Skipped | Process CPU |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 30 | 30,21 | 6,26 ms | 0,10 ms | 0,05 ms | 6,42 ms | 0 | 0,59% |
-| 60 | 60,16 | 5,11 ms | 0,11 ms | 0,06 ms | 5,28 ms | 0 | 1,16% |
-| 75 | 75,14 | 4,85 ms | 0,12 ms | 0,07 ms | 5,05 ms | 0 | 1,58% |
-| 90 | 90,21 | 4,61 ms | 0,12 ms | 0,09 ms | 4,82 ms | 0 | 1,99% |
-| 120 | 120,10 | 3,06 ms | 0,09 ms | 0,05 ms | 3,20 ms | 0 | 2,18% |
-| uncapped | 429,97 | 2,16 ms | 0,12 ms | 0,05 ms | 2,33 ms | 0 | 7,39% |
+| 30 | 30.21 | 6.26 ms | 0.10 ms | 0.05 ms | 6.42 ms | 0 | 0.59% |
+| 60 | 60.16 | 5.11 ms | 0.11 ms | 0.06 ms | 5.28 ms | 0 | 1.16% |
+| 75 | 75.14 | 4.85 ms | 0.12 ms | 0.07 ms | 5.05 ms | 0 | 1.58% |
+| 90 | 90.21 | 4.61 ms | 0.12 ms | 0.09 ms | 4.82 ms | 0 | 1.99% |
+| 120 | 120.10 | 3.06 ms | 0.09 ms | 0.05 ms | 3.20 ms | 0 | 2.18% |
+| uncapped | 429.97 | 2.16 ms | 0.12 ms | 0.05 ms | 2.33 ms | 0 | 7.39% |
 
-Een 30-fps center-square-test verlaagde capture van circa 6,57 ms voor
-1920×1080 full naar 4,84 ms voor 1080×1080. Resultaten variëren met compositor,
-desktopactiviteit, CPU-frequentie en netwerkbelasting.
+A separate 30 fps center-square test reduced capture time from approximately
+6.57 ms for 1920×1080 full capture to 4.84 ms for a 1080×1080 crop.
 
-Center-native AA is daarna opnieuw op 60 fps getest:
+Center-native AA measurements at 60 fps:
 
-| AA-modus | Crop | Werkelijk | Capture | Resize + AA | Send | Totaal | Skipped |
+| AA mode | Crop | Actual | Capture | Resize + AA | Send | Total | Skipped |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| supersample 2 | 128×128 | 60,33 | 4,33 ms | 0,27 ms | 0,06 ms | 4,66 ms | 0 |
-| supersample 3 | 192×192 | 60,33 | 3,92 ms | 0,70 ms | 0,08 ms | 4,71 ms | 0 |
-| Gaussian 0,5 | 64×64 | 60,33 | 4,97 ms | 0,35 ms | 0,07 ms | 5,40 ms | 0 |
-| Gaussian 2,0 | 64×64 | 60,37 | 3,80 ms | 0,63 ms | 0,05 ms | 4,48 ms | 0 |
-| off | 64×64 | 60,38 | 3,57 ms | 0,06 ms | 0,06 ms | 3,69 ms | 0 |
+| supersample 2 | 128×128 | 60.33 | 4.33 ms | 0.27 ms | 0.06 ms | 4.66 ms | 0 |
+| supersample 3 | 192×192 | 60.33 | 3.92 ms | 0.70 ms | 0.08 ms | 4.71 ms | 0 |
+| Gaussian 0.5 | 64×64 | 60.33 | 4.97 ms | 0.35 ms | 0.07 ms | 5.40 ms | 0 |
+| Gaussian 2.0 | 64×64 | 60.37 | 3.80 ms | 0.63 ms | 0.05 ms | 4.48 ms | 0 |
+| off | 64×64 | 60.38 | 3.57 ms | 0.06 ms | 0.06 ms | 3.69 ms | 0 |
 
-Alle gevraagde AA-modi behielden daarmee probleemloos 60 fps zonder skips.
+Color-correction A/B measurement with center-native supersample 2:
 
-De finale A/B-test van center-native supersample 2 met dezelfde 60-fps-pipeline:
-
-| Kleurcorrectie | Werkelijk | Capture | Resize/AA | Color | Send | Totaal | Skipped | CPU |
+| Color correction | Actual | Capture | Resize/AA | Color | Send | Total | Skipped | CPU |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| defaults aan | 60,13 | 5,45 ms | 0,30 ms | 0,08 ms | 0,07 ms | 5,90 ms | 0 | 2,63% |
-| volledig uit | 60,16 | 5,29 ms | 0,29 ms | 0,00 ms | 0,06 ms | 5,63 ms | 0 | 2,21% |
+| defaults enabled | 60.13 | 5.45 ms | 0.30 ms | 0.08 ms | 0.07 ms | 5.90 ms | 0 | 2.63% |
+| disabled | 60.16 | 5.29 ms | 0.29 ms | 0.00 ms | 0.06 ms | 5.63 ms | 0 | 2.21% |
 
-De kleurfase zelf kostte gemiddeld 0,08 ms per frame. De variatie in totale tijd
-komt grotendeels uit de X11-capture; beide runs hielden 60 fps zonder skips.
+The color stage itself averaged 0.08 ms per frame. Both runs maintained 60 fps
+without skips. Results vary with desktop activity, compositor behavior, CPU
+frequency, codec, camera stream, and network load.
 
-## Gevalideerde installatie
+## Validation performed
 
-- `wled-matrix2.local` resolveerde correct via mDNS;
-- ping: 0% pakketverlies;
-- WLED 16.0.1 op ESP32-S3/Adafruit MatrixPortal;
-- 64×64, 4096 RGB-pixels;
-- WLED-status tijdens streaming: `live=true`, `lm=DDP`;
-- solid-blue fysiek egaal blauw.
+The target installation was validated with:
 
-De RTSP-uitbreiding is gebouwd tegen libavformat 63.1.100, libavcodec 63.1.100,
-libavutil 61.1.100 en libswscale 10.1.100. Een lokale H.264-bron van 320×180 op
-20 fps werd native gedecodeerd; center-square werd correct herberekend als
-`180x180+70+0` en door de bestaande AA-, kleur- en DDP-pipeline gestuurd. Zowel
-TCP als UDP zijn geopend via de gekozen transportoptie. Een verbroken bron en
-een geweigerde verbinding activeerden de reconnectlus. Na toevoeging van RTSP
-behaalde de ongewijzigde X11-backend bij een regressietest 60,24 fps, nul skips
-en 4,32 ms totale frametijd.
+- WLED hostname resolving correctly through mDNS;
+- zero packet loss during the connectivity test;
+- WLED 16.0.1 on an ESP32-S3 / Adafruit MatrixPortal build;
+- a 64×64 matrix with 4,096 RGB pixels;
+- WLED reporting `live=true` and real-time mode `DDP`;
+- the physical solid-blue test displaying uniformly blue.
 
-DNS/mDNS-resolutie gebeurt één keer bij startup, nooit in de frame-loop. Een
-numeriek adres kan sneller starten:
+The RTSP extension was linked against libavformat 63.1.100, libavcodec 63.1.100,
+libavutil 61.1.100, and libswscale 10.1.100. A local 320×180, 20 fps H.264
+source decoded natively. Center-square produced `180x180+70+0`, followed by the
+normal AA, color, and DDP pipeline. Failed TCP and UDP connections both entered
+the reconnect loop.
 
-```sh
+After adding RTSP, the X11 regression test achieved 60.24 fps, zero skips, and
+4.32 ms total frame time.
+
+DNS or mDNS resolution is performed once at startup, never in the frame loop.
+For faster startup, a numeric address can be used:
+
+```bash
 ./build/wled-screen-streamer --host WLED_IP
 ```
 
-## systemd user-service
+## systemd user service
 
-De unit gebruikt `DISPLAY=:0`, 60 fps en nearest. Installeren:
+The supplied unit uses `DISPLAY=:0`, 60 fps, nearest-neighbor filtering, and the
+default screen source:
 
-```sh
+```text
+systemd/wled-screen-streamer.service
+```
+
+Install and start it:
+
+```bash
 mkdir -p ~/.config/systemd/user
 cp systemd/wled-screen-streamer.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now wled-screen-streamer.service
 ```
 
-Beheer:
+Inspect status and logs:
 
-```sh
+```bash
 systemctl --user status wled-screen-streamer.service
 journalctl --user -u wled-screen-streamer.service -f
+```
+
+Stop and disable it:
+
+```bash
 systemctl --user disable --now wled-screen-streamer.service
 ```
 
-De unit verwacht de binary onder
-`~/Development/wled-screen-streamer/build/wled-screen-streamer`. Pas `ExecStart`
-aan voor een ander pad of opties, bijvoorbeeld:
+The unit expects the executable at:
+
+```text
+~/Development/wled-screen-streamer/build/wled-screen-streamer
+```
+
+Edit `ExecStart` for another path, RTSP source, or additional options. Example:
 
 ```ini
 ExecStart=%h/Development/wled-screen-streamer/build/wled-screen-streamer --fps 120 --filter nearest --crop-mode center-square
 ```
 
-Importeer zo nodig de X11-omgeving vanuit de actieve grafische sessie:
+The user manager must have access to the X11 authentication environment. If
+necessary, run this from the active graphical session:
 
-```sh
+```bash
 systemctl --user import-environment DISPLAY XAUTHORITY
 systemctl --user restart wled-screen-streamer.service
 ```
 
 ## Troubleshooting
 
-### X11-display opent niet
+### X11 display cannot be opened
 
-```sh
+```bash
 echo "$DISPLAY"
 echo "$XAUTHORITY"
 xrandr --listmonitors
 ```
 
-De service gebruikt `DISPLAY=:0`; pas dit aan als de sessie elders draait.
+The supplied service uses `DISPLAY=:0`; change it when the session uses another
+display number.
 
-### MIT-SHM ontbreekt
+### MIT-SHM is unavailable
 
-```sh
+```bash
 xdpyinfo | grep MIT-SHM
 ```
 
-Er is bewust geen trage screenshotfallback.
+There is intentionally no slow screenshot fallback.
 
-### Host resolveert niet
+### WLED hostname does not resolve
 
-```sh
+```bash
 getent ahostsv4 wled-matrix2.local
 ping -c 3 wled-matrix2.local
 ```
 
-Controleer Avahi/mDNS of gebruik `--host` met het IP-adres.
+Check Avahi/mDNS or use `--host` with the numeric address.
 
-### WLED ontvangt niets
+### WLED receives no frames
 
-Controleer host, firewall en UDP-poort 4048. WLED toont een ontvangen stream in
-`/json/info` als `live=true` en `lm=DDP`:
+Check the host, firewall, and UDP port 4048. WLED exposes an active stream in
+`/json/info` as `live=true` and `lm=DDP`:
 
-```sh
+```bash
 curl -s http://wled-matrix2.local/json/info
 ./build/wled-screen-streamer --test-pattern solid-blue --ddp-debug
 ```
 
-### Verkeerde kleuren, banden of zwarte pixels
+### RTSP does not connect
 
-Controleer met `solid-blue` de headerwaarden tegen de DDP-tabel. Controleer ook
-WLEDs matrixafmetingen, RGB-volgorde en fysieke 2D-mapping.
+Verify the complete URL, credentials, camera stream path, and selected
+transport. Start with TCP, then try UDP on a trusted local network:
 
-### Crop buiten het scherm
+```bash
+./build/wled-screen-streamer \
+  --source rtsp \
+  --url rtsp://CAMERA/stream \
+  --rtsp-transport tcp \
+  --benchmark
+```
 
-`--crop-x/y` zijn monitor-relatief, maar de effectieve crop moet volledig binnen
-het totale X11-scherm liggen. Verlaag offset of grootte, of laat waarden weg om
-automatisch te centreren.
+Connection errors are printed to standard error. The process remains alive and
+retries after one second.
 
-## Projectstructuur
+### Wrong colors, bands, or black pixels
+
+Use `solid-blue` and compare the header dump with the DDP table above. Also
+check WLED matrix dimensions, RGB order, and physical 2D mapping.
+
+### Crop is outside the source
+
+`--crop-x` and `--crop-y` are relative to the selected monitor or RTSP frame,
+but the final crop must remain completely inside that source. Reduce the offset
+or crop size, or omit values to center automatically.
+
+## Project structure
 
 ```text
-CMakeLists.txt                         buildconfiguratie
-src/main.cpp                          streamerimplementatie
-systemd/wled-screen-streamer.service  systemd user-unit
-README.md                              documentatie
-build/wled-screen-streamer             lokale releasebinary
+CMakeLists.txt                         build configuration
+src/main.cpp                          streamer implementation
+systemd/wled-screen-streamer.service  optional systemd user unit
+README.md                              project documentation
+build/wled-screen-streamer             local release executable after building
 ```
