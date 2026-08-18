@@ -1,0 +1,13 @@
+[Unit]
+Description=Low-latency X11 screen stream to WLED
+After=graphical-session.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/Development/wled-screen-streamer/build/wled-screen-streamer --fps 60 --filter nearest
+Restart=on-failure
+RestartSec=2
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=graphical-session.target

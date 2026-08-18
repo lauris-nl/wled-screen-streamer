@@ -1,0 +1,6 @@
+/build/
+/.agents/
+/.codex/
+*.log
+*.out
+compile_commands.json
